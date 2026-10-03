@@ -1,0 +1,99 @@
+diff --git a/av1/encoder/intra_mode_search.c b/av1/encoder/intra_mode_search.c
+index 4cefbab6..9b72f5d9 100644
+--- a/av1/encoder/intra_mode_search.c
++++ b/av1/encoder/intra_mode_search.c
+@@ -861,6 +861,21 @@ static bool should_prune_chroma_smooth_pred_based_on_source_variance(
+   return true;
+ }
+ 
++
++// EXPERIMENT ONLY (avif-speed-testing): AOM_EXP bit flags enable new,
++// non-upstream search shortcuts so they can be A/B tested without rebuilds.
++//   1: approximate (Laplacian) coefficient rate for luma in MODE_EVAL
++//   2: chroma intra modes pruned by Hadamard model cost (> 1.50x best)
++//   4: same as 2 with a tighter threshold (> 1.25x best)
++static int aom_exp_flags(void) {
++  static int flags = -1;
++  if (flags < 0) {
++    const char *env = getenv("AOM_EXP");
++    flags = env ? (int)strtol(env, NULL, 0) : 0;
++  }
++  return flags;
++}
++
+ int64_t av1_rd_pick_intra_sbuv_mode(const AV1_COMP *const cpi, MACROBLOCK *x,
+                                     int *rate, int *rate_tokenonly,
+                                     int64_t *distortion, uint8_t *skippable,
+@@ -902,6 +917,10 @@ int64_t av1_rd_pick_intra_sbuv_mode(const AV1_COMP *const cpi, MACROBLOCK *x,
+   IntraModeSearchState intra_search_state;
+   init_intra_mode_search_state(&intra_search_state);
+   const CFL_ALLOWED_TYPE cfl_allowed = is_cfl_allowed(xd);
++  const int exp_flags = aom_exp_flags();
++  const double uv_model_thresh =
++      (exp_flags & 4) ? 1.25 : ((exp_flags & 2) ? 1.50 : 0.0);
++  int64_t best_uv_model_rd = INT64_MAX;
+ 
+   // Search through all non-palette modes.
+   for (int mode_idx = 0; mode_idx < UV_INTRA_MODES; ++mode_idx) {
+@@ -945,6 +964,23 @@ int64_t av1_rd_pick_intra_sbuv_mode(const AV1_COMP *const cpi, MACROBLOCK *x,
+     // Init variables for cfl and angle delta
+     const SPEED_FEATURES *sf = &cpi->sf;
+     mbmi->angle_delta[PLANE_TYPE_UV] = 0;
++
++    // Prune chroma modes whose Hadamard-domain model cost (U + V) is far
++    // above the best seen so far, like the luma search does.
++    if (uv_model_thresh > 0 && uv_mode != UV_CFL_PRED) {
++      const struct macroblockd_plane *pd_u = &xd->plane[AOM_PLANE_U];
++      const BLOCK_SIZE uv_bsize = get_plane_block_size(
++          mbmi->bsize, pd_u->subsampling_x, pd_u->subsampling_y);
++      const TX_SIZE uv_tx =
++          AOMMIN(TX_32X32, av1_get_tx_size(AOM_PLANE_U, xd));
++      const int64_t uv_model_rd =
++          intra_model_rd(cm, x, AOM_PLANE_U, uv_bsize, uv_tx, 1) +
++          intra_model_rd(cm, x, AOM_PLANE_V, uv_bsize, uv_tx, 1);
++      if (best_uv_model_rd != INT64_MAX &&
++          uv_model_rd > uv_model_thresh * best_uv_model_rd)
++        continue;
++      if (uv_model_rd < best_uv_model_rd) best_uv_model_rd = uv_model_rd;
++    }
+     if (uv_mode == UV_CFL_PRED) {
+       if (!cfl_allowed || !intra_mode_cfg->enable_cfl_intra) continue;
+       assert(!is_directional_mode);
+diff --git a/av1/encoder/tx_search.c b/av1/encoder/tx_search.c
+index b23ed420..07b051f1 100644
+--- a/av1/encoder/tx_search.c
++++ b/av1/encoder/tx_search.c
+@@ -1957,6 +1957,21 @@ static inline void update_txb_coeff_cost(RD_STATS *rd_stats, int plane,
+ }
+ #endif
+ 
++
++// EXPERIMENT ONLY (avif-speed-testing): AOM_EXP bit flags enable new,
++// non-upstream search shortcuts so they can be A/B tested without rebuilds.
++//   1: approximate (Laplacian) coefficient rate for luma in MODE_EVAL
++//   2: chroma intra modes pruned by Hadamard model cost (> 1.50x best)
++//   4: same as 2 with a tighter threshold (> 1.25x best)
++static int aom_exp_flags(void) {
++  static int flags = -1;
++  if (flags < 0) {
++    const char *env = getenv("AOM_EXP");
++    flags = env ? (int)strtol(env, NULL, 0) : 0;
++  }
++  return flags;
++}
++
+ static inline int cost_coeffs(MACROBLOCK *x, int plane, int block,
+                               TX_SIZE tx_size, const TX_TYPE tx_type,
+                               const TXB_CTX *const txb_ctx,
+@@ -2226,6 +2241,11 @@ static void search_tx_type(const AV1_COMP *cpi, MACROBLOCK *x, int plane,
+       // quantization matrices.
+       av1_optimize_b(cpi, x, plane, block, tx_size, tx_type, txb_ctx,
+                      &rate_cost);
++    } else if ((aom_exp_flags() & 1) && plane == 0 &&
++               txfm_params->mode_eval_type == MODE_EVAL) {
++      rate_cost = av1_cost_coeffs_txb_laplacian(
++          x, plane, block, tx_size, tx_type, txb_ctx,
++          cm->features.reduced_tx_set_used, /*adjust_eob=*/0);
+     } else {
+       rate_cost = cost_coeffs(x, plane, block, tx_size, tx_type, txb_ctx,
+                               cm->features.reduced_tx_set_used);

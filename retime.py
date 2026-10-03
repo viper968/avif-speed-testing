@@ -27,14 +27,11 @@ REPS = int(os.environ.get("REPS", 2))
 def encode_cpu(config, image, q):
     args = list(bench.CONFIGS[config])
     enc = "avifenc"
-    bins = {bench.NEW: bench.NEW_BIN, bench.PATCHED: bench.PATCHED_BIN}
+    bins = {bench.NEW: bench.NEW_BIN, bench.PATCHED: bench.PATCHED_BIN, bench.EXP: bench.EXP_BIN}
     if args and args[0] in bins:
         enc, args = str(bins[args[0]] / "avifenc"), args[1:]
-    env = dict(os.environ)
-    env.pop("AOM_SF", None)
-    for a in [a for a in args if a.startswith("AOM_SF=")]:
-        env["AOM_SF"] = a.split("=", 1)[1]
-    args = [a for a in args if not a.startswith("AOM_SF=")]
+    env = bench.split_env(args)
+    args = [a for a in args if not a.startswith(bench.ENV_TOKENS)]
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [enc, "-j", "1", *args, "-q", str(q), str(bench.ROOT / "images" / image),
                str(Path(tmp) / "out.avif")]

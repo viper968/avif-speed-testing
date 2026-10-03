@@ -35,11 +35,19 @@ NEW = "@new"
 # experiment-only AOM_SF speed-feature override hook).
 PATCHED_BIN = Path(os.environ.get("AVIF_PATCHED_BIN", ROOT / "build" / "patched"))
 PATCHED = "@patched"
+# Patched build plus patches/0003 (experiment-only new search shortcuts,
+# switched on with the AOM_EXP env var).
+EXP_BIN = Path(os.environ.get("AVIF_EXP_BIN", ROOT / "build" / "exp"))
+EXP = "@exp"
 
 
 def sf(**overrides):
     """Speed-feature overrides for the patched build (AOM_SF env var)."""
     return "AOM_SF=" + ",".join(f"{k}={v}" for k, v in overrides.items())
+
+
+ENV_TOKENS = ("AOM_SF=", "AOM_EXP=")
+S65 = sf(optimize_coefficients=0, use_square_partition_only_threshold=3)
 
 AOM = ["-c", "aom"]
 CONFIGS = {
@@ -89,7 +97,22 @@ CONFIGS = {
                           sf(optimize_coefficients=0, use_square_partition_only_threshold=3,
                              cdef_pick_method=6)],
     "p_s7_t0": [PATCHED, *AOM, "-s", "7", sf(optimize_coefficients=0)],
+    # --- phase 5: new search shortcuts (patches/0003) on top of "speed 6.5"
+    #     (trellis off + square-only partitions above 8x8) ---
+    **{f"x_s65_e{e}": [EXP, *AOM, "-s", "6", S65, f"AOM_EXP={e}"] for e in [0, 1, 2, 4, 3, 5]},
 }
+
+
+def split_env(args):
+    """Environment for an encode: AOM_SF=/AOM_EXP= tokens in args become vars."""
+    env = dict(os.environ)
+    for k in ENV_TOKENS:
+        env.pop(k[:-1], None)
+    for a in args:
+        if a.startswith(ENV_TOKENS):
+            k, v = a.split("=", 1)
+            env[k] = v
+    return env
 
 
 def run_one(config, args, image, q):
@@ -97,15 +120,12 @@ def run_one(config, args, image, q):
         avif = Path(tmp) / "out.avif"
         png = Path(tmp) / "out.png"
         enc, dec = "avifenc", "avifdec"
-        bins = {NEW: NEW_BIN, PATCHED: PATCHED_BIN}
+        bins = {NEW: NEW_BIN, PATCHED: PATCHED_BIN, EXP: EXP_BIN}
         if args and args[0] in bins:
             b = bins[args[0]]
             enc, dec, args = str(b / "avifenc"), str(b / "avifdec"), args[1:]
-        env = dict(os.environ)
-        env.pop("AOM_SF", None)
-        for a in [a for a in args if a.startswith("AOM_SF=")]:
-            env["AOM_SF"] = a.split("=", 1)[1]
-        args = [a for a in args if not a.startswith("AOM_SF=")]
+        env = split_env(args)
+        args = [a for a in args if not a.startswith(ENV_TOKENS)]
         cmd = [enc, "-j", "1", *args, "-q", str(q), str(image), str(avif)]
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env)
         _, status, ru = os.wait4(proc.pid, 0)
