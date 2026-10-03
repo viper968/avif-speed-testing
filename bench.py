@@ -82,6 +82,13 @@ CONFIGS = {
     "p_s6_sqonly8": [PATCHED, *AOM, "-s", "6", sf(use_square_partition_only_threshold=3)],
     "p_s6_part4_4": [PATCHED, *AOM, "-s", "6", sf(prune_part4_search=4)],
     "p_s6_topintra1": [PATCHED, *AOM, "-s", "6", sf(top_intra_model_count_allowed=1)],
+    # --- phase 4b: combinations of the cheapest wins ---
+    "p_s6_t0_sq8": [PATCHED, *AOM, "-s", "6",
+                    sf(optimize_coefficients=0, use_square_partition_only_threshold=3)],
+    "p_s6_t0_sq8_cdefq": [PATCHED, *AOM, "-s", "6",
+                          sf(optimize_coefficients=0, use_square_partition_only_threshold=3,
+                             cdef_pick_method=6)],
+    "p_s7_t0": [PATCHED, *AOM, "-s", "7", sf(optimize_coefficients=0)],
 }
 
 
