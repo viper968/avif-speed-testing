@@ -187,6 +187,47 @@ Conclusion: at speed 6, libaom's remaining search is already tightly pruned.
 The big remaining cost, the intra mode/partition search itself, is what speed 7
 cuts, and that is where its +4% comes from.
 
+## Threads vs speed and size
+
+`threads.py` sweeps `-j` (1, 2, 3, 4, 8) and tiling on the patched libaom,
+speed 6 (`tune=iq`). The machine has 4 physical cores. Encodes run one at a
+time, so wall-clock time is meaningful, with the median of 3 shuffled reps.
+Size is quality-matched (SSIMULACRA2) against 1 thread without tiles. Two
+image sets: the 10 Kodak photos (768×512) and two 2304×1536 (3.5 MP) mosaics
+of Kodak photos. Raw data: `threads_results.csv`.
+
+| threads | wall speedup, 0.4 MP | wall speedup, 3.5 MP | CPU time | BD-rate (size cost) |
+|---|---|---|---|---|
+| 1 | 1.00× | 1.00× | 1.00 | 0 |
+| 2 | 1.69× | 1.73× | 1.02–1.04 | +0.13% / +0.20% |
+| 3 | 2.13× | 2.35× | 1.02–1.03 | +0.13% / +0.20% |
+| 4 | **2.44×** | **2.85×** | 1.04–1.05 | +0.13% / +0.20% |
+| 8 (oversubscribed) | 2.24× | 2.88× | 1.03–1.06 | +0.13% / +0.20% |
+
+- **The size cost is small and flat.** Any `-j` ≥ 2 changes the output the
+  same way (2, 3, 4 and 8 threads produce byte-identical files), at +0.13% to
+  +0.2% BD-rate. Single- vs multi-threaded encodes make slightly different
+  internal decisions, but adding more threads costs nothing further.
+- **Scaling is sub-linear.** 4 threads give 2.4–2.85×. On the 3.5 MP images
+  that fits ~13% of the work being serial, which matches the single-threaded
+  PNG decode + RGB→YUV conversion (~12% in the profile), plus the wavefront
+  limits of superblock-row threading. Small images have fewer superblock rows
+  to spread across threads, so they scale worse. Threads beyond the core count
+  don't help.
+- **CPU overhead** of threading is only 2–6%.
+- **`--autotiling` does nothing** at these sizes (identical files). Explicit
+  2×2 tiles cost +0.76% on the small images for a barely faster encode (2.67×
+  vs 2.44× at 4 threads). On the mosaics, tiles came out slightly *smaller*
+  (−0.1% to −0.4%), probably because each tile restarts its entropy coder
+  adaptation and these images are stitched from unrelated photos. Don't
+  generalise that from 2 images.
+
+**Batch encoding:** for many images, run one single-threaded encode per core
+instead. On the 10 Kodak images (q63, 3 reps): sequential `-j 1` took 3.0s,
+sequential `-j 4` 1.2s (**2.45×**), and 4 parallel `-j 1` processes 0.85s
+(**3.6×**), with no +0.13% size cost. Note that avifenc 1.4.2 defaults to
+`-j all`.
+
 ## Caveats
 
 - **Averages, not guarantees.** With `new_s7`, 8 of 10 images got 4–15% smaller
