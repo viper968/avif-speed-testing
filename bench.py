@@ -56,6 +56,10 @@ CONFIGS = {
     #     are overridden by libaom 3.8's all-intra speed features: no effect) ---
     "aom_s6_tune_psnr": AOM + ["-s", "6", "-a", "tune=psnr"],
     "aom_s7_10bit": AOM + ["-s", "7", "-d", "10"],
+    # --- phase 3: libavif 1.4.2 + libaom 3.14.1 (defaults to tune=iq) ---
+    **{f"new_s{s}": [NEW, *AOM, "-s", str(s)] for s in [4, 5, 6, 7, 8, 9]},
+    "new_s6_ssim": [NEW, *AOM, "-s", "6", "-a", "tune=ssim"],
+    **{f"new_s{s}_ssimu2": [NEW, *AOM, "-s", str(s), "-a", "tune=ssimulacra2"] for s in [6, 7, 8]},
 }
 
 
