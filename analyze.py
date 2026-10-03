@@ -92,14 +92,17 @@ def compare(data, cfg):
     return out
 
 
-def verdict(m, tol=0.005):
-    """Which of the three goals does this config meet at this operating point?"""
+def verdict(m, tol=0.005, ttol=0.03):
+    """Which of the three goals does this config meet at this operating point?
+
+    ttol is wider than tol because CPU timing is noisy (~3% run to run).
+    """
     g = []
-    if m["time"] < 1 - tol and m["size"] <= 1 + tol:
+    if m["time"] < 1 - ttol and m["size"] <= 1 + tol:
         g.append("1:faster")
-    if m["dq"] > 0.25 and m["time_s"] <= 1 + tol:
+    if m["dq"] > 0.25 and m["time_s"] <= 1 + ttol:
         g.append("2:better-Q")
-    if m["size"] < 1 - tol and m["time"] <= 1 + tol:
+    if m["size"] < 1 - tol and m["time"] <= 1 + ttol:
         g.append("3:smaller")
     return " ".join(g) or "-"
 
