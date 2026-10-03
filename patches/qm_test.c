@@ -1,3 +1,8 @@
+/* Randomized bit-exactness test: C vs AVX2 libaom quantizers with qmatrix
+ * (patches/0001). Build against the patched libaom static library:
+ *   gcc -O2 -o qm_test qm_test.c <build>/_deps/libaom-build/libaom.a -lm -lpthread
+ *   ./qm_test     # expect "0 mismatches" for both functions
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,9 +55,16 @@ int main(void) {
       invert_quant(&bq[0], &bs[0], dq[0]); invert_quant(&bq[1], &bs[1], dq[1]);
       if (rnd() % 10 == 0) { bq[0] = (int16_t)rnd(); bq[1] = (int16_t)rnd(); }
       uint16_t f0 = 0xffff, f1 = 0xfffe;
+      /* The C code computes |coeff| * wt in int (UB above 2^31 / 255), so
+       * only test the range where it is defined. Real coeffs are < 2^20. */
+      static tran_low_t cb[4096];
+      for (int i = 0; i < nc; i++) {
+        const int32_t lim = (1 << 23) - 1;
+        cb[i] = c[i] > lim ? lim : c[i] < -lim ? -lim : c[i];
+      }
       memset(q1, 0x55, sizeof(q1)); memset(d1, 0x55, sizeof(d1));
-      aom_quantize_b_helper_c(c, nc, zb, rd, bq, bs, q0, d0, dq, &f0, scan, iscan, qm, iqm, ls);
-      aom_quantize_b_helper_avx2(c, nc, zb, rd, bq, bs, q1, d1, dq, &f1, scan, iscan, qm, iqm, ls);
+      aom_quantize_b_helper_c(cb, nc, zb, rd, bq, bs, q0, d0, dq, &f0, scan, iscan, qm, iqm, ls);
+      aom_quantize_b_helper_avx2(cb, nc, zb, rd, bq, bs, q1, d1, dq, &f1, scan, iscan, qm, iqm, ls);
       if (f0 != f1 || memcmp(q0, q1, nc * 4) || memcmp(d0, d1, nc * 4)) {
         if (fails_b++ < 5) {
           printf("B MISMATCH it=%d nc=%d ls=%d eob %u/%u quant %d/%d shift %d/%d\n", it, nc, ls, f0, f1, bq[0], bq[1], bs[0], bs[1]);
