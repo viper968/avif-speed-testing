@@ -152,6 +152,41 @@ level 5. `default_max_partition_size=16X16` cost +1.1% for only ~5%.
 - Versus the original system baseline (libavif 1.0.4 speed 6): `p_s6_trellis_off`
   is 0.78× time and 7.4% smaller; `p_s6_t0_sq8` is 0.71× time and 7.0% smaller.
 
+### New search methods tried (none paid off)
+
+Profiling the "speed 6.5" config (patched, trellis off, square-only above 8×8)
+showed the cost is now spread across mode decision: luma intra-mode search
+41%, chroma intra-mode search 17%, final/dry-run block encode ~15%, bitstream
+writing ~9%. (PNG decode 7% and RGB→YUV 5% also show up, but the RGB→YUV
+cost comes from building without libyuv, which normal libavif builds use.)
+
+Before writing code, each idea was checked with temporary instrumentation
+counters in libaom, and three were rejected on the data alone:
+
+| idea | measurement | verdict |
+|---|---|---|
+| Skip the exact rate calculation when transform-domain distortion alone already loses (exact, lossless) | would skip only ~0.5% of transform-type evaluations | not worth it |
+| Rank all luma modes by the Hadamard model first, full RD only on the top K | only ~2.4 modes/block get full RD today; winner is model rank 1 only ~60% (top-3: 87%) | small K loses quality, larger K saves nothing |
+| Decide transform size once per block, reuse across modes | libaom already does this (mode eval uses largest tx; size search only for the winner) | already exists |
+| Closed-form CfL alpha instead of the stepwise search | the walk already stops after 1 failed step each way in the common case | little to gain |
+
+Two were implemented as an experiment-only patch
+([`patches/0003`](patches/0003-libaom-EXPERIMENT-AOM_EXP-new-search-shortcuts.patch),
+`AOM_EXP` env var) and benchmarked on top of speed 6.5 (all re-timed together):
+
+| `AOM_EXP` | method | time | BD-rate |
+|---|---|---|---|
+| 1 | context-free (Laplacian) coefficient rate for luma during mode evaluation; exact rate kept for the winner/final pass | 0.98× | **+2.2%** |
+| 2 | prune chroma intra modes whose Hadamard model cost (U+V) > 1.5× the best so far (luma has this, chroma didn't) | 1.02× | 0.0% |
+| 4 | same, threshold 1.25× | 1.01× | 0.0% |
+
+The approximate rate makes worse mode choices for little time saved. Chroma
+pruning costs about as much as it saves, because libaom already drops most
+chroma modes cheaply (mode-rate bound and early exit in the transform RD).
+Conclusion: at speed 6, libaom's remaining search is already tightly pruned.
+The big remaining cost, the intra mode/partition search itself, is what speed 7
+cuts, and that is where its +4% comes from.
+
 ## Caveats
 
 - **Averages, not guarantees.** With `new_s7`, 8 of 10 images got 4–15% smaller

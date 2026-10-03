@@ -1,5 +1,5 @@
 diff --git a/av1/encoder/intra_mode_search.c b/av1/encoder/intra_mode_search.c
-index 4cefbab6..9b72f5d9 100644
+index 4cefbab6..637f8d67 100644
 --- a/av1/encoder/intra_mode_search.c
 +++ b/av1/encoder/intra_mode_search.c
 @@ -861,6 +861,21 @@ static bool should_prune_chroma_smooth_pred_based_on_source_variance(
@@ -35,7 +35,7 @@ index 4cefbab6..9b72f5d9 100644
  
    // Search through all non-palette modes.
    for (int mode_idx = 0; mode_idx < UV_INTRA_MODES; ++mode_idx) {
-@@ -945,6 +964,23 @@ int64_t av1_rd_pick_intra_sbuv_mode(const AV1_COMP *const cpi, MACROBLOCK *x,
+@@ -945,6 +964,24 @@ int64_t av1_rd_pick_intra_sbuv_mode(const AV1_COMP *const cpi, MACROBLOCK *x,
      // Init variables for cfl and angle delta
      const SPEED_FEATURES *sf = &cpi->sf;
      mbmi->angle_delta[PLANE_TYPE_UV] = 0;
@@ -46,8 +46,9 @@ index 4cefbab6..9b72f5d9 100644
 +      const struct macroblockd_plane *pd_u = &xd->plane[AOM_PLANE_U];
 +      const BLOCK_SIZE uv_bsize = get_plane_block_size(
 +          mbmi->bsize, pd_u->subsampling_x, pd_u->subsampling_y);
-+      const TX_SIZE uv_tx =
-+          AOMMIN(TX_32X32, av1_get_tx_size(AOM_PLANE_U, xd));
++      // Largest square transform that fits the chroma block (as the luma
++      // search does); the Hadamard model only supports square sizes.
++      const TX_SIZE uv_tx = AOMMIN(TX_32X32, max_txsize_lookup[uv_bsize]);
 +      const int64_t uv_model_rd =
 +          intra_model_rd(cm, x, AOM_PLANE_U, uv_bsize, uv_tx, 1) +
 +          intra_model_rd(cm, x, AOM_PLANE_V, uv_bsize, uv_tx, 1);
