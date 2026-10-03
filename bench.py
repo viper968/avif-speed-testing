@@ -31,6 +31,15 @@ FIELDS = ["config", "image", "q", "bytes", "cpu_s", "ssimu2"]
 # with NEW run against it instead of the system avifenc/avifdec.
 NEW_BIN = Path(os.environ.get("AVIF_NEW_BIN", ROOT / "build" / "libavif" / "build"))
 NEW = "@new"
+# Same libavif/libaom with patches/ applied (AVX2 QM quantizer + the
+# experiment-only AOM_SF speed-feature override hook).
+PATCHED_BIN = Path(os.environ.get("AVIF_PATCHED_BIN", ROOT / "build" / "patched"))
+PATCHED = "@patched"
+
+
+def sf(**overrides):
+    """Speed-feature overrides for the patched build (AOM_SF env var)."""
+    return "AOM_SF=" + ",".join(f"{k}={v}" for k, v in overrides.items())
 
 AOM = ["-c", "aom"]
 CONFIGS = {
@@ -60,6 +69,19 @@ CONFIGS = {
     **{f"new_s{s}": [NEW, *AOM, "-s", str(s)] for s in [4, 5, 6, 7, 8, 9]},
     "new_s6_ssim": [NEW, *AOM, "-s", "6", "-a", "tune=ssim"],
     **{f"new_s{s}_ssimu2": [NEW, *AOM, "-s", str(s), "-a", "tune=ssimulacra2"] for s in [6, 7, 8]},
+    # --- phase 4: patched libaom (bit-identical to new_*, faster) + single
+    #     internal speed-feature changes on top of speed 6 ---
+    **{f"p_s{s}": [PATCHED, *AOM, "-s", str(s)] for s in [6, 7]},
+    "p_s6_coeff7": [PATCHED, *AOM, "-s", "6", sf(perform_coeff_opt=7)],
+    "p_s6_coeff8": [PATCHED, *AOM, "-s", "6", sf(perform_coeff_opt=8)],
+    "p_s6_trellis_final": [PATCHED, *AOM, "-s", "6", sf(optimize_coefficients=2)],
+    "p_s6_trellis_off": [PATCHED, *AOM, "-s", "6", sf(optimize_coefficients=0)],
+    "p_s6_cdef5": [PATCHED, *AOM, "-s", "6", sf(cdef_pick_method=5)],
+    "p_s6_cdefq": [PATCHED, *AOM, "-s", "6", sf(cdef_pick_method=6)],
+    "p_s6_maxpart16": [PATCHED, *AOM, "-s", "6", sf(default_max_partition_size=6)],
+    "p_s6_sqonly8": [PATCHED, *AOM, "-s", "6", sf(use_square_partition_only_threshold=3)],
+    "p_s6_part4_4": [PATCHED, *AOM, "-s", "6", sf(prune_part4_search=4)],
+    "p_s6_topintra1": [PATCHED, *AOM, "-s", "6", sf(top_intra_model_count_allowed=1)],
 }
 
 
@@ -68,10 +90,17 @@ def run_one(config, args, image, q):
         avif = Path(tmp) / "out.avif"
         png = Path(tmp) / "out.png"
         enc, dec = "avifenc", "avifdec"
-        if args and args[0] == NEW:
-            enc, dec, args = str(NEW_BIN / "avifenc"), str(NEW_BIN / "avifdec"), args[1:]
+        bins = {NEW: NEW_BIN, PATCHED: PATCHED_BIN}
+        if args and args[0] in bins:
+            b = bins[args[0]]
+            enc, dec, args = str(b / "avifenc"), str(b / "avifdec"), args[1:]
+        env = dict(os.environ)
+        env.pop("AOM_SF", None)
+        for a in [a for a in args if a.startswith("AOM_SF=")]:
+            env["AOM_SF"] = a.split("=", 1)[1]
+        args = [a for a in args if not a.startswith("AOM_SF=")]
         cmd = [enc, "-j", "1", *args, "-q", str(q), str(image), str(avif)]
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env)
         _, status, ru = os.wait4(proc.pid, 0)
         err = proc.stderr.read().decode()
         proc.stderr.close()

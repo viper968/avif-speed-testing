@@ -1,0 +1,97 @@
+diff --git a/av1/encoder/speed_features.c b/av1/encoder/speed_features.c
+index 4bfeb88e..2370ae2a 100644
+--- a/av1/encoder/speed_features.c
++++ b/av1/encoder/speed_features.c
+@@ -2649,6 +2649,76 @@ static void set_subpel_search_method(
+     mv_search_params->find_fractional_mv_step = av1_return_min_sub_pixel_mv;
+ }
+ 
++// EXPERIMENT ONLY (avif-speed-testing): override individual speed features
++// from the environment, e.g. AOM_SF="perform_coeff_opt=8,cdef_pick_method=5".
++// Lets each feature be measured in isolation without rebuilding.
++#include <stdio.h>
++static void apply_sf_env_overrides(SPEED_FEATURES *sf) {
++  const char *env = getenv("AOM_SF");
++  if (env == NULL || *env == '\0') return;
++#define SF_FIELD(name, field) { name, &(field), sizeof(field) }
++  const struct {
++    const char *name;
++    void *ptr;
++    size_t size;
++  } fields[] = {
++    SF_FIELD("optimize_coefficients", sf->rd_sf.optimize_coefficients),
++    SF_FIELD("perform_coeff_opt", sf->rd_sf.perform_coeff_opt),
++    SF_FIELD("tx_domain_dist_level", sf->rd_sf.tx_domain_dist_level),
++    SF_FIELD("cdef_pick_method", sf->lpf_sf.cdef_pick_method),
++    SF_FIELD("intra_pruning_with_hog", sf->intra_sf.intra_pruning_with_hog),
++    SF_FIELD("chroma_intra_pruning_with_hog",
++             sf->intra_sf.chroma_intra_pruning_with_hog),
++    SF_FIELD("top_intra_model_count_allowed",
++             sf->intra_sf.top_intra_model_count_allowed),
++    SF_FIELD("cfl_search_range", sf->intra_sf.cfl_search_range),
++    SF_FIELD("prune_filter_intra_level", sf->intra_sf.prune_filter_intra_level),
++    SF_FIELD("winner_mode_tx_type_pruning",
++             sf->tx_sf.tx_type_search.winner_mode_tx_type_pruning),
++    SF_FIELD("prune_tx_type_est_rd", sf->tx_sf.tx_type_search.prune_tx_type_est_rd),
++    SF_FIELD("prune_tx_type_using_stats",
++             sf->tx_sf.tx_type_search.prune_tx_type_using_stats),
++    SF_FIELD("partition_search_type", sf->part_sf.partition_search_type),
++    SF_FIELD("default_max_partition_size", sf->part_sf.default_max_partition_size),
++    SF_FIELD("default_min_partition_size", sf->part_sf.default_min_partition_size),
++    SF_FIELD("use_square_partition_only_threshold",
++             sf->part_sf.use_square_partition_only_threshold),
++    SF_FIELD("prune_part4_search", sf->part_sf.prune_part4_search),
++    SF_FIELD("prune_rectangular_split_based_on_qidx",
++             sf->part_sf.prune_rectangular_split_based_on_qidx),
++    SF_FIELD("prune_sub_8x8_partition_level",
++             sf->part_sf.prune_sub_8x8_partition_level),
++    SF_FIELD("ml_early_term_after_part_split_level",
++             sf->part_sf.ml_early_term_after_part_split_level),
++    SF_FIELD("intra_cnn_based_part_prune_level",
++             sf->part_sf.intra_cnn_based_part_prune_level),
++    SF_FIELD("mode_search_skip_flags", sf->rt_sf.mode_search_skip_flags),
++    SF_FIELD("var_part_split_threshold_shift",
++             sf->rt_sf.var_part_split_threshold_shift),
++  };
++#undef SF_FIELD
++  char buf[1024];
++  snprintf(buf, sizeof(buf), "%s", env);
++  for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
++    char *eq = strchr(tok, '=');
++    if (eq == NULL) continue;
++    *eq = '\0';
++    const long v = strtol(eq + 1, NULL, 0);
++    size_t i;
++    for (i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
++      if (strcmp(tok, fields[i].name) != 0) continue;
++      if (fields[i].size == 1) *(uint8_t *)fields[i].ptr = (uint8_t)v;
++      else if (fields[i].size == 2) *(uint16_t *)fields[i].ptr = (uint16_t)v;
++      else *(int32_t *)fields[i].ptr = (int32_t)v;
++      break;
++    }
++    if (i == sizeof(fields) / sizeof(fields[0])) {
++      fprintf(stderr, "AOM_SF: unknown speed feature '%s'\n", tok);
++      abort();
++    }
++  }
++}
++
+ void av1_set_speed_features_framesize_dependent(AV1_COMP *cpi, int speed) {
+   SPEED_FEATURES *const sf = &cpi->sf;
+   const AV1EncoderConfig *const oxcf = &cpi->oxcf;
+@@ -2664,6 +2734,7 @@ void av1_set_speed_features_framesize_dependent(AV1_COMP *cpi, int speed) {
+       set_rt_speed_feature_framesize_dependent(cpi, sf, speed);
+       break;
+   }
++  apply_sf_env_overrides(sf);
+ 
+   if (!cpi->ppi->seq_params_locked) {
+     cpi->common.seq_params->enable_masked_compound &=
+@@ -2719,6 +2790,7 @@ void av1_set_speed_features_framesize_independent(AV1_COMP *cpi, int speed) {
+       set_rt_speed_features_framesize_independent(cpi, sf, speed);
+       break;
+   }
++  apply_sf_env_overrides(sf);
+ 
+   // Note: when use_nonrd_pick_mode is true, the transform size is the
+   // minimum of 16x16 and the largest possible size of the current block,
